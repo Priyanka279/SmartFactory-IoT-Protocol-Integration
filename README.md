@@ -1,0 +1,119 @@
+# SmartFactory IoT Protocol Integration
+### Real-Time Data Analytics for IoT — Module 2 Assignment
+
+**Student:** Priyankakumari Gupta 
+**Student ID:** 101008820  
+**Course:** Real-Time Data Analytics for IoT  
+
+---
+
+## Test Results
+
+All automated tests pass:
+
+```
+32 passed in 20.96s
+```
+
+| Test Suite | Tests | Status |
+|------------|-------|--------|
+| MQTT Publisher (Task 1.1) | 6 | PASSED |
+| MQTT Subscriber (Task 1.2) | 9 | PASSED |
+| MQTT QoS Experiment (Task 1.3) | 1 | PASSED |
+| CoAP Server (Task 2.1) | 10 | PASSED |
+| AMQP Topology (Task 3) | — | Skipped per instructor |
+
+Full output: [`test_results.txt`](test_results.txt)
+
+---
+
+## What Was Built
+
+### Task 1 — MQTT (`src/mqtt/`)
+- **`publisher.py`** — Publishes all 6 sensors (3 types × 2 lines) at 1 Hz with correct QoS per sensor type (temperature=QoS1, vibration=QoS0, power=QoS2), persistent session, and LWT configured for `factory/line1/status`
+- **`subscriber.py`** — Wildcard subscriber on `factory/#`, separate QoS-2 subscription on `factory/+/temperature`, CRITICAL ALERT detection at >85°C, 30-second message summary
+
+### Task 2 — CoAP (`src/coap/`)
+- **`server.py`** — 6 observable resources (`/factory/line{1,2}/{temperature,vibration,power}`), fan actuator (`/actuator/line1/fan` with PUT ON/OFF → 2.04 Changed), and a >33 KB firmware manifest at `/factory/manifest` triggering Block2 transfer
+- **`observer.py`** — Concurrent Observe subscriptions on both temperature resources, stale-notification detection (RFC 7641 mod-2²⁴), clean deregistration after 60 s, Block2 manifest reassembly
+
+### Task 3 — AMQP (`src/amqp/`)
+- **`topology.py`** — Full RabbitMQ topology: `iot.telemetry` topic exchange, `iot.dlx` dead-letter exchange, 5 queues with correct TTL/max-length/DLX bindings  
+- *Task 3 skipped for grading per instructor instruction*
+
+### Task 4 — Packet Analysis (`report/packet_analysis.md`)
+- MQTT CONNECT, QoS-1 PUBLISH, and PUBACK annotated with byte-level field breakdowns
+- CoAP CON GET, ACK 2.05 Content, and Observe notification annotated
+
+### Task 5 — Protocol Comparison Report (`report/comparison_report.md`)
+- QoS comparison table with measured latencies (QoS0=2.9ms, QoS1=3.1ms, QoS2=6.6ms)
+- CoAP–HTTP proxy option mapping (RFC 8075)
+- Protocol recommendations for all 4 SmartFactory data paths
+- 300-word reflection on implementation challenges
+
+---
+
+## How to Run
+
+### Prerequisites
+- Python 3.10+
+- Docker Desktop running
+
+### Setup
+```bash
+# Install dependencies
+pip install -r requirements.txt
+
+# Start MQTT broker
+docker compose up -d mosquitto
+```
+
+### Run Tests
+```bash
+python -m pytest tests/mqtt/ tests/coap/ -v
+```
+
+### Run Individual Components
+```bash
+# MQTT
+python -m src.mqtt.publisher      # Terminal 1
+python -m src.mqtt.subscriber     # Terminal 2
+
+# CoAP
+python -m src.coap.server         # Terminal 1
+python -m src.coap.observer       # Terminal 2
+```
+
+---
+
+## Project Structure
+
+```
+module1-assignment/
+├── src/
+│   ├── mqtt/
+│   │   ├── publisher.py       ← Task 1.1 (complete)
+│   │   └── subscriber.py      ← Task 1.2 (complete)
+│   ├── coap/
+│   │   ├── server.py          ← Task 2.1 (complete)
+│   │   └── observer.py        ← Task 2.2 (complete)
+│   └── amqp/
+│       └── topology.py        ← Task 3.1 (complete, skipped per instructor)
+├── report/
+│   ├── packet_analysis.md     ← Task 4 annotations
+│   └── comparison_report.md   ← Task 5 report
+├── test_results.txt            ← Full pytest output (32 passed)
+├── tests/                      ← Pre-written test harness (unmodified)
+├── docker-compose.yml
+└── requirements.txt
+```
+
+---
+
+## Infrastructure
+
+| Service | Port | Notes |
+|---------|------|-------|
+| Mosquitto MQTT | 1883 | `docker compose up -d mosquitto` |
+| CoAP Server | 5683 | `python -m src.coap.server` |
+| RabbitMQ | 5672 / 15672 | `docker compose up -d rabbitmq` |
