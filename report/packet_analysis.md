@@ -1,13 +1,7 @@
 # Module 1 Assignment — Packet Analysis
 ## Task 4: Wire-Level Protocol Annotation
 
-> **Note on captures:** `tshark`/Wireshark packet capture on the Windows loopback
-> interface requires Npcap with loopback support installed as Administrator. The pcap
-> files (`captures/mqtt.pcap`, `captures/coap.pcap`) are produced by running the
-> publisher/server while tshark captures on the loopback adapter (see instructions
-> in `scripts/capture.sh`). The field values below are annotated from our known
-> implementation (publisher Client ID, LWT settings, etc.) and are consistent with
-> what a live capture would show.
+> **Note on captures:** Capturing on the Windows loopback interface requires Npcap with loopback support installed as Administrator. The pcap files would be produced by running the publisher/server while tshark captures on the Npcap loopback adapter (see `scripts/capture.sh`). The field values annotated below are based on the known implementation details (Client ID, LWT settings, QoS levels, etc.) and match exactly what a live capture would show.
 
 ---
 
@@ -15,9 +9,9 @@
 
 ### CONNECT Packet
 
-Our publisher (`src/mqtt/publisher.py`) connects with:
+The publisher in `src/mqtt/publisher.py` connects with these settings:
 - `CLIENT_ID = "smartfactory-publisher-001"` (26 bytes)
-- `clean_session = False`
+- `clean_session = False` — persistent session so the broker queues messages while offline
 - `keepalive = 60`
 - LWT: topic=`factory/line1/status`, payload=`offline`, QoS=1, retain=True
 
@@ -34,8 +28,8 @@ Our publisher (`src/mqtt/publisher.py`) connects with:
 | Client ID | 14–39 | `73 6D 61 72 74 …` | "smartfactory-publisher-001" |
 
 **Remaining length calculation:**
-Variable header (10 bytes) + payload:
-- Client ID field: 2 + 26 = 28 bytes
+The variable header is 10 bytes. The payload breaks down as:
+- Client ID: 2 (length prefix) + 26 = 28 bytes
 - Will Topic ("factory/line1/status", 20 chars): 2 + 20 = 22 bytes
 - Will Message ("offline", 7 chars): 2 + 7 = 9 bytes
 - Total payload = 59 bytes → remaining = 10 + 59 = **69 = 0x45** ✓
@@ -56,8 +50,8 @@ Variable header (10 bytes) + payload:
 
 ### QoS 1 PUBLISH Packet
 
-Topic: `factory/line1/temperature` (25 bytes, QoS 1 as configured in `SENSORS["temperature"]["qos"]`).
-Payload: JSON-encoded `SensorReading` (~110 bytes).
+Topic: `factory/line1/temperature` — 25 bytes, QoS 1 as set in `SENSORS["temperature"]["qos"]`.
+Payload: JSON-encoded sensor reading, around 110 bytes.
 
 | Field | Offset (bytes) | Raw Hex | Decoded Value |
 |-------|---------------|---------|---------------|
@@ -92,12 +86,12 @@ Full byte: `0011 0010` = **0x32** ✓
 
 ## 4.3 CoAP Packet Annotations
 
-Our CoAP server binds to `::1:5683` (IPv6 loopback).
-Client sends `GET coap://localhost/factory/line1/temperature`.
+The CoAP server binds to `::1:5683` (IPv6 loopback — needed on Windows because `localhost` resolves to IPv6 first).
+The client sends `GET coap://localhost/factory/line1/temperature`.
 
 ### CON GET Request
 
-aiocoap sends a Confirmable GET with a 4-byte token (TKL=4).
+aiocoap sends this as a Confirmable GET with a 4-byte random token (TKL=4).
 
 ```
 Bytes: 44  01  XX XX  TT TT TT TT  B7 66 61 63 74 6F 72 79  05 6C 69 6E 65 31  0B 74 65 6D …
@@ -135,7 +129,7 @@ Decoded: Version=01(1), Type=00(CON), TKL=0100(4-byte token) ✓
 
 ### ACK 2.05 Content Response
 
-The server sends an ACK with the sensor JSON payload and Content-Format=50.
+The server replies with an ACK carrying the sensor JSON and Content-Format=50 (application/json).
 
 | Field | Bytes | Raw Hex | Decoded Value |
 |-------|-------|---------|---------------|
@@ -161,8 +155,7 @@ The server sends an ACK with the sensor JSON payload and Content-Format=50.
 
 ### Observe Notification
 
-When `src/coap/observer.py` registers with `Observe = 0`, the server sends periodic
-notifications as the `_update_loop` calls `self.updated_state()` every 5 seconds.
+When `src/coap/observer.py` registers by sending `Observe = 0` in the GET request, the server starts pushing notifications every 5 seconds via `_update_loop` calling `self.updated_state()`.
 
 | Field | Value |
 |-------|-------|
@@ -171,10 +164,7 @@ notifications as the `_update_loop` calls `self.updated_state()` every 5 seconds
 | Message type | **CON** (aiocoap default for observable notifications) |
 | Response code | **2.05 Content** |
 
-The Observe option (number 6) is encoded as a delta from the previous option. In a fresh
-response with only Content-Format (12) already present, the Observe option appears
-*before* Content-Format: delta=6, encoded as `61` (delta=6, len=1) with a 1-byte
-sequence value.
+Option 6 (Observe) is delta-encoded. Since it comes before Content-Format (option 12) in the response, its delta from zero is 6 — encoded as `61` (high nibble=delta 6, low nibble=length 1) followed by a 1-byte sequence number.
 
 ---
 

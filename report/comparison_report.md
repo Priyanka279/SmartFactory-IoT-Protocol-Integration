@@ -8,29 +8,20 @@
 
 ## 5.1 QoS Comparison Results Table
 
-Results measured by running `pytest tests/mqtt/test_qos_loss.py -v -s` against a local
-Mosquitto broker (loopback, no artificial packet loss injected — `tc/netem` not available
-on Windows; loss simulation is in-process per the test harness comments).
+I ran `pytest tests/mqtt/test_qos_loss.py -v -s` against a local Mosquitto broker on loopback. Since `tc/netem` isn't available on Windows, the packet loss simulation is done in-process by the test harness itself.
 
 | Protocol / QoS       | Sent | Received | Lost (%) | Duplicates | Avg Latency (ms) |
 |----------------------|------|----------|----------|------------|-----------------|
 | MQTT QoS 0           | 100  | 100      | 0.0 %    | 0          | 2.9             |
 | MQTT QoS 1           | 100  | 100      | 0.0 %    | 0          | 3.1             |
 | MQTT QoS 2           | 100  | 100      | 0.0 %    | 0          | 6.6             |
-| CoAP NON             | —    | —        | ~10 %*   | 0          | ~3 ms*          |
-| CoAP CON             | —    | —        | 0.0 %*   | 0–1*       | ~8 ms*          |
-| AMQP (auto-ack off)  | —    | —        | —        | —          | —               |
+| CoAP NON             | -    | -        | ~10 %*   | 0          | ~3 ms*          |
+| CoAP CON             | -    | -        | 0.0 %*   | 0–1*       | ~8 ms*          |
+| AMQP (auto-ack off)  | -    | -        | -        | -          | -               |
 
-> \* CoAP NON/CON and AMQP rows: CoAP values are theoretical (no equivalent test harness
-> was provided for CoAP NON/CON under packet loss); AMQP is excluded per assignment
-> instruction [IGNORE AMQP]. The latency estimates for CoAP are based on measured CoAP
-> server GET response time observed during `pytest tests/coap/test_server.py`.
+> \* CoAP NON/CON values are estimates - there was no test harness provided for CoAP under packet loss, so these are based on protocol behaviour and the response times I saw during `pytest tests/coap/test_server.py`. AMQP is skipped per assignment instruction.
 
-**Key observation from the MQTT measurements:** QoS 2 average latency (6.6 ms) is more
-than double QoS 0 (2.9 ms). On loopback with zero loss all three QoS levels deliver every
-message, but the latency overhead of the extra handshake round-trips is already visible.
-Under 10 % packet loss on a real network, QoS 0 would drop ~10 messages while QoS 1/2
-would still deliver all 100 — that is the fundamental trade-off these levels exist to address.
+The most obvious thing from these numbers is that QoS 2 at 6.6 ms is more than twice as slow as QoS 0 at 2.9 ms, even on loopback with no actual packet loss. The extra latency is just from the two additional round-trips in the handshake. On a real network with 10% loss, QoS 0 would drop around 10 messages out of 100 while QoS 1 and 2 would still get all 100 through - that's the whole point of the QoS levels.
 
 ---
 
@@ -38,54 +29,30 @@ would still deliver all 100 — that is the fundamental trade-off these levels e
 
 **Q1. Why does QoS 0 lose messages while QoS 1 and 2 do not?**
 
-QoS 0 is "fire-and-forget": the publisher writes the packet to the TCP socket and discards
-the message immediately. If the broker's TCP receive buffer drops the segment (due to
-congestion or loss), no retransmission occurs and the message is gone. QoS 1 and QoS 2
-both require a broker acknowledgement (PUBACK or PUBREC/PUBCOMP) before the publisher
-discards its copy; if no ACK arrives within the keep-alive window the publisher retransmits,
-guaranteeing delivery at the cost of at least one network round-trip per message.
+QoS 0 is basically fire-and-forget - the publisher sends the packet and immediately throws away its copy. If the network drops the segment, there's nothing left to retransmit so the message is just gone. QoS 1 and QoS 2 both wait for an acknowledgement from the broker (PUBACK for QoS 1, or the PUBREC/PUBCOMP handshake for QoS 2) before discarding the message. If no ACK comes back, the publisher resends - which is why they don't lose messages under packet loss.
 
 **Q2. QoS 1 may show duplicates. Under what circumstances and is it a problem for telemetry?**
 
-A QoS 1 duplicate occurs when the publisher retransmits a PUBLISH (because the PUBACK was
-lost or delayed) after the broker has already delivered the original. The broker sets the DUP
-flag to 1 on retransmissions but must still forward the message. For sensor telemetry this is
-generally acceptable: a second temperature reading with the same timestamp and sequence number
-can be detected and deduplicated by the subscriber using the `seq` field in our payload. The
-duplication does not cause incorrect actuator commands in our system because actuator decisions
-are based on threshold comparisons, not on message counts.
+A duplicate happens when the broker already delivered the message but the PUBACK got lost on the way back. The publisher doesn't know this and retransmits, so the broker delivers it again. For temperature readings this is fine - the subscriber can just check the `seq` field and skip anything it already processed. It doesn't cause any problems for the actuator logic either, since fan on/off decisions are based on whether the temperature crossed a threshold, not on how many messages arrived.
 
 **Q3. QoS 2 has higher latency. What causes it and when is the trade-off worth it?**
 
-QoS 2 requires a four-packet handshake: PUBLISH → PUBREC → PUBREL → PUBCOMP. This adds two
-full round-trips compared to the single round-trip of QoS 1, explaining the measured 6.6 ms
-vs 3.1 ms latency. The guarantee obtained is exactly-once delivery — the broker will never
-deliver a duplicate to the subscriber. This trade-off is worth paying when duplicate
-processing causes incorrect behaviour: billing events, actuator commands that should fire
-exactly once (e.g. triggering an emergency shutdown), or financial transactions. For
-high-frequency sensor telemetry the duplicate-safe QoS 1 is usually preferable; QoS 2 is
-reserved for safety-critical actuator commands.
+QoS 2 does a four-step handshake: PUBLISH → PUBREC → PUBREL → PUBCOMP. That's two full round-trips instead of one, which is why it measured 6.6 ms compared to 3.1 ms for QoS 1. What you get in return is exactly-once delivery - the broker will never hand the same message to a subscriber twice. That's worth paying for things like actuator commands that should only fire once (e.g. triggering an emergency shutdown) or billing events. For regular sensor telemetry, QoS 1 is usually the better trade-off since a rare duplicate is harmless and the lower latency matters more.
 
 ---
 
 ## 5.2 CoAP–HTTP Proxy Mapping
 
-> Note: `tests/coap/test_proxy.py` was not included in the provided starter kit. The
-> table below documents the standard CoAP-to-HTTP option mapping defined in RFC 8075
-> (A Framework for Proxying CoAP and HTTP). These are the values the proxy *would* return
-> for a GET to `coap://localhost/factory/line1/temperature`.
+> Note: `tests/coap/test_proxy.py` wasn't included in the starter kit, so the table below is based on the RFC 8075 standard mapping rather than live test output. These are the expected values a proxy would return for a GET to `coap://localhost/factory/line1/temperature`.
 
-| HTTP Header              | CoAP Option                | Your Observed / Expected Value            |
+| HTTP Header              | CoAP Option                | Expected Value                            |
 |--------------------------|----------------------------|-------------------------------------------|
 | `Content-Type`           | Option 12 (Content-Format) | `application/json` (Content-Format = 50)  |
 | `Cache-Control: max-age` | Option 14 (Max-Age)        | `max-age=60` (default CoAP Max-Age = 60 s)|
 | `ETag`                   | Option 4 (ETag)            | 4-byte opaque ETag generated by the proxy |
 | `Location`               | Option 8 (Location-Path)   | `/factory/line1/temperature`              |
 
-The mapping follows RFC 7252 §10.1 and RFC 8075: the CoAP Content-Format option (numeric
-50 = `application/json`) becomes the HTTP `Content-Type` header; the CoAP Max-Age option
-becomes `Cache-Control: max-age`; CoAP ETags are passed through as HTTP ETags; and the
-CoAP Uri-Path options reassembled as the HTTP `Location` header on PUT/POST responses.
+The way this works: CoAP Content-Format option 12 (value 50 = application/json) maps directly to the HTTP `Content-Type` header. The CoAP Max-Age option becomes `Cache-Control: max-age`. ETags pass through unchanged. The Uri-Path options get reassembled into the HTTP `Location` header on PUT/POST responses. This is all defined in RFC 7252 §10.1 and RFC 8075.
 
 ---
 
@@ -104,60 +71,25 @@ CoAP Uri-Path options reassembled as the HTTP `Location` header on PUT/POST resp
 
 **Sensor → Cloud: MQTT QoS 1**
 
-The SmartFactory produces six sensor readings per second (3 sensor types × 2 lines × 1 Hz).
-The most important requirement is sub-100 ms end-to-end latency combined with sufficient
-reliability that critical temperature spikes are never silently dropped.
+In our setup, six sensor readings are generated every second across 3 sensor types and 2 factory lines. The two things that matter most here are keeping latency under 100 ms and making sure temperature spikes don't get dropped silently - since those are what trigger the cooling fan.
 
-MQTT QoS 1 is the right choice because it delivers at-least-once guarantees with only a
-single PUBACK round-trip. Our measured average latency was **3.1 ms** on loopback (a best
-case), leaving a large margin for a wide-area network with 20–50 ms RTT. The payload is a
-compact JSON object of roughly 100–120 bytes on top of MQTT's 2-byte fixed header —
-substantially less overhead than an equivalent HTTP/JSON request (~200-byte header). The
-broker's topic-based fan-out means a single PUBLISH from the sensor reaches both the
-`factory/#` monitoring consumer and the `factory/+/temperature` alert consumer without the
-publisher knowing or caring about downstream topology. CoAP NON could achieve similar
-latency but lacks the broker fan-out; CoAP CON adds retransmission overhead comparable to
-MQTT QoS 1 but without persistent sessions, making reconnection on intermittent links harder.
+I went with MQTT QoS 1 for this path. The at-least-once guarantee means the broker will always receive the message, and the overhead is just one PUBACK round-trip. When I measured it locally, average latency came out at **3.1 ms** — that's on loopback so it's a best case, but it still leaves plenty of headroom for a real network with 20–50 ms RTT. The JSON payload is around 100–120 bytes, which sits on top of MQTT's tiny 2-byte fixed header, so bandwidth usage stays low. Another reason MQTT works well here is the broker's fan-out - one PUBLISH automatically reaches both the `factory/#` monitoring subscriber and the `factory/+/temperature` alert subscriber without the publisher needing to know about either of them.
 
-MQTT QoS 0 (2.9 ms measured) is not recommended despite its lower latency because under
-any real-world packet loss it will silently drop readings — including the critical
-temperature readings that must trigger the cooling-fan actuator.
+I did consider CoAP NON (similar latency) but it doesn't have a broker, so fan-out would have to be handled manually. CoAP CON adds retransmission like QoS 1 but loses persistent sessions, which makes reconnection unreliable on flaky links.
+
+QoS 0 was tempting at 2.9 ms but I ruled it out - under any real packet loss it silently drops messages, and a dropped temperature reading could mean the cooling fan never gets triggered.
 
 **Actuator Commands: MQTT QoS 2**
 
-Fan ON/OFF commands are safety-critical: an undelivered ON command means the cooling fan
-never starts; a duplicate ON command is harmless, but a duplicate OFF command in a sequence
-would incorrectly stop the fan. MQTT QoS 2's four-way handshake (PUBLISH → PUBREC →
-PUBREL → PUBCOMP) provides exactly-once delivery to the broker, and combining it with a
-subscriber that uses `clean_session=False` ensures the command is delivered exactly once
-even if the actuator goes offline and reconnects. Our measured QoS 2 latency was **6.6 ms**
-— well within the safety latency budget for an industrial cooling fan (typically 100–500 ms
-response time is acceptable). CoAP CON PUT could also guarantee acknowledgement, but it
-lacks the session state needed to buffer commands while the MCU is temporarily offline.
+For fan ON/OFF commands, getting it wrong has real consequences. A missed ON command means the fan never starts. A duplicate OFF command in the middle of a sequence would shut it down at the wrong time. That's why I chose QoS 2 here — the four-way handshake (PUBLISH → PUBREC → PUBREL → PUBCOMP) guarantees exactly-once delivery. Combined with `clean_session=False` on the subscriber, the command gets buffered at the broker and delivered even if the actuator was temporarily offline. The measured latency was **6.6 ms**, which is well within acceptable range for an industrial cooling fan (typically 100–500 ms response time is fine). I looked at CoAP CON PUT as an alternative but it doesn't have session state, so commands would be lost if the device disconnects and reconnects.
 
 **Backend Service-to-Service: AMQP Topic Exchange**
 
-The SmartFactory backend needs to route sensor data simultaneously to: an alert processor
-(critical temperature events only), a time-series database (all factory data), a line-1
-monitor (line1 data only), and a dead-letter audit trail. AMQP's topic exchange with
-routing keys (`factory.line1.temperature`, `factory.line1.temperature.critical`) handles all
-of these bindings declaratively without the consumers knowing about each other. Publisher
-Confirms (implemented in `src/amqp/producer.py`) give the producer per-message delivery
-confirmation. The `x-dead-letter-exchange` configuration on `temperature-queue` and
-`all-telemetry-queue` ensures that expired or overflowed messages are automatically routed
-to the audit queue rather than silently discarded — a capability absent from both MQTT and
-CoAP without custom application logic.
+The backend has to send sensor data to several consumers at once - a critical alert processor, a time-series database, a line-1 specific monitor, and a dead-letter audit trail. AMQP's topic exchange handles this cleanly: routing keys like `factory.line1.temperature` and `factory.line1.temperature.critical` let each consumer subscribe to exactly what it needs without any of them knowing about the others. I also configured `x-dead-letter-exchange` on the temperature and all-telemetry queues so that expired or overflowed messages automatically go to the audit queue instead of being silently dropped. That kind of built-in routing and overflow handling would need a lot of custom code to replicate in MQTT or CoAP.
 
 **OTA Firmware: CoAP + Block2**
 
-Class 2 constrained devices have ≤ 2 KB RAM and ≤ 256 KB flash. They cannot buffer a full
-TCP stream for HTTP, and MQTT session state overhead is non-trivial. CoAP over UDP with
-Block2 transfer is purpose-built for this scenario: the `/factory/manifest` resource in our
-implementation delivers a **33 965-byte** JSON manifest in automatically fragmented 1024-byte
-blocks, with the aiocoap library handling reassembly transparently at the client. Each block
-is acknowledged individually (CON blocks), so a lost UDP segment causes only a single-block
-retransmission rather than restarting the entire transfer. The 4-byte CoAP header imposes
-far less overhead than MQTT's connect handshake on a resource-constrained device.
+Class 2 constrained devices have at most 2 KB RAM and 256 KB flash - they can't hold a full HTTP TCP stream in memory, and MQTT's session overhead is too heavy. CoAP over UDP with Block2 is designed for exactly this. In the implementation, `/factory/manifest` serves a **33,965-byte** JSON manifest split into 1024-byte blocks. The client requests each block individually and aiocoap handles the reassembly automatically. If a UDP packet gets dropped, only that one block needs to be retransmitted - not the whole file. The CoAP fixed header is just 4 bytes, which is much lighter than MQTT's connection handshake on a device with limited resources.
 
 ---
 
@@ -165,46 +97,17 @@ far less overhead than MQTT's connect handshake on a resource-constrained device
 
 ### Technical Challenge
 
-The most significant technical challenge was getting the CoAP test suite to pass on
-Windows with Python 3.14 and aiocoap 0.4.17. The default `create_server_context()` call
-throws `ValueError: The transport can not be bound to any-address` because aiocoap's
-`simplesocketserver` transport explicitly rejects wildcard addresses on some platforms.
-Additionally, the pytest-asyncio `asyncio_mode = auto` configuration created an event-loop
-scope mismatch: module-scoped `coap_server` and `coap_client` fixtures were created in the
-module-level event loop, but individual test functions ran in their own function-level loops,
-causing "Future attached to a different loop" errors. The resolution required two changes:
-(1) explicitly binding the server to `::1:5683` (IPv6 loopback, which is how Windows resolves
-`localhost` first), and (2) adding `asyncio_default_test_loop_scope = module` to `pytest.ini`
-so that all tests in a module share the same event loop as the module-scoped fixtures.
+The hardest part of this assignment was getting the CoAP tests to pass on Windows with Python 3.14 and aiocoap 0.4.17. I kept hitting a `ValueError: The transport can not be bound to any-address` error because aiocoap's simplesocketserver rejects wildcard bind addresses on some platforms. I initially tried binding to `127.0.0.1` but the tests were still timing out. After some digging I found that Windows resolves `localhost` to IPv6 first (`::1`), so the client was sending to `::1:5683` while the server was listening on `127.0.0.1:5683` - they never connected. Changing the bind address to `("::1", 5683)` fixed that.
+
+The second issue was a "Future attached to a different loop" error in pytest. The CoAP fixtures are module-scoped, but pytest-asyncio was running each test function in its own separate event loop. The fixtures and tests were on different loops and couldn't share objects. I had to add both `asyncio_default_fixture_loop_scope = module` and `asyncio_default_test_loop_scope = module` to `pytest.ini` to get them all on the same loop.
 
 ### Most Surprising Protocol Difference
 
-The most surprising observation during packet analysis is how radically different the
-per-message overhead is across the three protocols. An MQTT QoS 0 PUBLISH for a 100-byte
-sensor payload adds only 2 bytes of fixed header plus a variable-length topic — the entire
-packet is under 130 bytes. The equivalent CoAP NON GET response also has a compact 4-byte
-header but requires a full request-response round-trip per reading instead of the broker-push
-model. AMQP frames, by contrast, wrap the same 100-byte payload in at minimum three frames
-(Method, Header, Body) plus a Heartbeat frame every 60 seconds, adding 30–50 bytes of
-framing overhead per message. For IoT sensors that transmit tiny readings at high frequency,
-this overhead difference is not academic — it directly affects battery life and bandwidth
-costs on constrained devices.
+What surprised me most was the difference in per-message overhead between the three protocols. An MQTT QoS 0 PUBLISH for a 100-byte sensor payload only adds a 2-byte fixed header plus the topic string — the whole packet is under 130 bytes. CoAP also has a compact 4-byte header, but it needs a full request-response round-trip for every reading instead of the broker pushing to subscribers. AMQP was the real eye-opener - the same 100-byte payload gets wrapped in at least three separate frames (Method, Header, Body) on top of a Heartbeat frame every 60 seconds, adding 30–50 bytes of overhead per message. For devices sending tiny sensor readings dozens of times per second, that adds up fast in terms of battery life and bandwidth.
 
 ### Most Complex Protocol to Implement
 
-CoAP was the most complex protocol to implement correctly, for three specific reasons.
-First, the Observe option requires maintaining a per-subscriber sequence counter with
-modular arithmetic (mod 2²⁴) to detect stale notifications — a subtle invariant that is
-easy to get wrong and silently produces incorrect behaviour (we handle it in
-`observer.py:_handle_notification`). Second, Block2 transfer forces the application to
-be stateless: the server must regenerate the same byte-for-byte payload for each block
-request, since the client uses the ETag to detect changes between blocks. Third, the
-asynchronous nature of UDP means the server must simultaneously manage multiple live
-Observe subscriptions, the 5-second update loop, and Block2 fragment delivery, all
-within a single asyncio event loop without blocking. By contrast, MQTT's event model
-is simpler (callbacks triggered by the paho-mqtt loop thread) and AMQP's blocking
-channel API in pika makes the sequential publish/consume/ack pattern straightforward
-to reason about.
+CoAP was definitely the most complex of the three. Three things made it tricky. First, the Observe option needs a per-subscriber sequence counter that wraps around at 2²⁴ — if you get the modular arithmetic wrong, stale notifications get accepted silently, which is hard to catch. Second, Block2 transfer requires the server to be completely stateless: it has to regenerate the exact same payload for every block request, because the client uses the ETag to spot mid-transfer changes. Third, everything runs in a single asyncio event loop - live Observe subscriptions, the 5-second sensor update loop, and Block2 fragment delivery all have to coexist without any of them blocking the others. MQTT was much simpler by comparison (paho-mqtt handles the loop in a background thread and you just write callbacks), and AMQP's blocking channel API in pika made the publish/consume/ack flow easy to follow step by step.
 
 ---
 
