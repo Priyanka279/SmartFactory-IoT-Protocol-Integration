@@ -249,6 +249,10 @@ async def build_server() -> aiocoap.Context:
                       SensorResource("line1", "power"))
     root.add_resource(["factory", "line2", "temperature"],
                       SensorResource("line2", "temperature"))
+    root.add_resource(["factory", "line2", "vibration"],
+                      SensorResource("line2", "vibration"))
+    root.add_resource(["factory", "line2", "power"],
+                      SensorResource("line2", "power"))
 
     # Actuator resource
     root.add_resource(["actuator", "line1", "fan"],
@@ -269,7 +273,8 @@ async def build_server() -> aiocoap.Context:
 async def main() -> None:
     context = await build_server()
     log.info("CoAP server running on coap://localhost:5683")
-    log.info("Resources: /factory/line{1,2}/{temperature,vibration,power}, "
+    log.info("Resources: /factory/line1/{temperature,vibration,power}, "
+             "/factory/line2/{temperature,vibration,power}, "
              "/actuator/line1/fan, /factory/manifest")
     await asyncio.get_event_loop().create_future()  # run forever
 

@@ -12,7 +12,7 @@
 All automated tests pass:
 
 ```
-22 passed in 20.46s
+29 passed in 35.51s
 ```
 
 | Test Suite | Tests | Status |
@@ -21,9 +21,12 @@ All automated tests pass:
 | MQTT Subscriber (Task 1.2) | 5 | PASSED |
 | MQTT QoS Experiment (Task 1.3) | 1 | PASSED |
 | CoAP Server (Task 2.1) | 10 | PASSED |
+| CoAP-HTTP Proxy (Task 2.3) | 7 | PASSED |
 | AMQP Topology (Task 3) | — | Skipped per instructor |
 
 Full output: [`test_results.txt`](test_results.txt)
+
+> Proxy test suite updated to professor's 7-test version (adds ETag, Location, and line2 checks).
 
 ---
 
