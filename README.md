@@ -12,13 +12,13 @@
 All automated tests pass:
 
 ```
-32 passed in 20.96s
+22 passed in 20.46s
 ```
 
 | Test Suite | Tests | Status |
 |------------|-------|--------|
 | MQTT Publisher (Task 1.1) | 6 | PASSED |
-| MQTT Subscriber (Task 1.2) | 9 | PASSED |
+| MQTT Subscriber (Task 1.2) | 5 | PASSED |
 | MQTT QoS Experiment (Task 1.3) | 1 | PASSED |
 | CoAP Server (Task 2.1) | 10 | PASSED |
 | AMQP Topology (Task 3) | — | Skipped per instructor |
