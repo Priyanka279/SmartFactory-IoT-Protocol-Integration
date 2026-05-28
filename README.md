@@ -95,20 +95,23 @@ python -m src.coap.observer       # Terminal 2
 module1-assignment/
 ├── src/
 │   ├── mqtt/
-│   │   ├── publisher.py       ← Task 1.1 (complete)
-│   │   └── subscriber.py      ← Task 1.2 (complete)
+│   │   ├── publisher.py         ← Task 1.1 (completed)
+│   │   └── subscriber.py        ← Task 1.2 (completed)
 │   ├── coap/
-│   │   ├── server.py          ← Task 2.1 (complete)
-│   │   └── observer.py        ← Task 2.2 (complete)
+│   │   ├── server.py            ← Task 2.1 (completed)
+│   │   └── observer.py          ← Task 2.2 (completed)
 │   └── amqp/
-│       └── topology.py        ← Task 3.1 (complete, skipped per instructor)
+│       └── topology.py          ← Task 3.1 (skipped per instructor)
+├── captures/
+│   ├── mqtt.pcap                ← Task 4 capture
+│   ├── coap.pcap                ← Task 4 capture
+│   └── amqp.pcap                ← Task 4 (skipped per instructor)
 ├── report/
-│   ├── packet_analysis.md     ← Task 4 annotations
-│   └── comparison_report.md   ← Task 5 report
-├── test_results.txt            ← Full pytest output (32 passed)
-├── tests/                      ← Pre-written test harness (unmodified)
-├── docker-compose.yml
-└── requirements.txt
+│   ├── packet_analysis.md       ← Task 4 annotations
+│   └── comparison_report.md     ← Task 5 report
+├── tests/                       ← Do not modify
+├── docker-compose.yml           ← Do not modify
+└── README.md                    ← Brief run instructions
 ```
 
 ---
